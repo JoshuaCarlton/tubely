@@ -3,7 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -42,34 +46,51 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	mediaType := header.Header.Get("Content-Type")
-	data, err := io.ReadAll(file)
+	contentType := header.Header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
+		respondWithError(w, http.StatusBadRequest, "Unable to parse Content-Type", err)
 		return
 	}
+	if !(mediaType == "image/jpeg" || mediaType == "image/png") {
+		respondWithError(w, http.StatusBadRequest, "thumbnail must be an image of type jpeg or png", err)
+		return
+	}
+
+	typeParts := strings.Split(mediaType, "/")
+	extension := typeParts[1]
 
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "video not found", err)
+		return
 	}
 
 	if video.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
 	}
 
-	thumbnail := thumbnail{
-		data:      data,
-		mediaType: mediaType,
+	thumbnailPath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%v.%v", videoID, extension))
+	osFile, err := os.Create(thumbnailPath)
+	if err != nil {
+		respondWithError(w, 500, "could not create file", err)
+		return
 	}
 
-	videoThumbnails[videoID] = thumbnail
-	url := fmt.Sprintf("http://localhost:%v/api/thumbnails/%v", cfg.port, videoID)
-	video.ThumbnailURL = &url
+	_, err = io.Copy(osFile, file)
+	if err != nil {
+		respondWithError(w, 500, "could not create file", err)
+		return
+	}
+
+	thumbnailURL := fmt.Sprintf("http://localhost:%v/assets/%v.%v", cfg.port, videoID, extension)
+	video.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, 500, "could not update video", err)
+		return
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
