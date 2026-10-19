@@ -85,6 +85,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, 500, "File manipulation unsucsessful", err)
 		return
 	}
+	fmt.Println(tempFile.Name())
+	fastPath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, 500, "Video processing failed", err)
+		return
+	}
+	fmt.Println(fastPath)
+	fastFile, err := os.Open(fastPath)
+	if err != nil {
+		respondWithError(w, 500, "Video processing failed", err)
+		return
+	}
+	defer os.Remove(fastPath)
+	defer fastFile.Close()
 
 	rng := make([]byte, 32)
 	rand.Read(rng)
@@ -109,7 +123,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		Bucket:      &cfg.s3Bucket,
 		Key:         &key,
 		ContentType: &contentType,
-		Body:        tempFile,
+		Body:        fastFile,
 	}
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &putObjInput)
